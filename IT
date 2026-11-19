@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arena Brawl PRO</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1b1033; overflow: hidden; font-family: Arial, sans-serif; }
+  canvas { display: block; cursor: crosshair; }
+
+  #menu {
+    position: fixed; inset: 0; overflow-y: auto; z-index: 5;
+    background: rgba(20,8,45,.94); color: #fff; padding: 20px 16px 40px; text-align: center;
+  }
+  #menu h1 { font-size: 40px; margin: 6px 0; letter-spacing: 3px; color: #ffd43b; text-shadow: 0 4px 0 #6a3d00; }
+  #menu h2 { margin: 22px 0 10px; font-size: 20px; color: #d9ccff; }
+  #coins { display: inline-block; background: #3a2400; color: #ffd43b; font-weight: bold; font-size: 22px;
+           padding: 8px 20px; border-radius: 30px; border: 3px solid #ffd43b; margin: 6px 0; }
+  #result { min-height: 24px; font-size: 18px; font-weight: bold; margin: 8px 0; }
+  .grid { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; max-width: 1000px; margin: 0 auto; }
+  .card {
+    width: 200px; background: #2d1b54; border: 3px solid #4a3480; border-radius: 12px;
+    padding: 12px; cursor: pointer; transition: transform .1s; text-align: left;
+  }
+  .card:hover { transform: translateY(-3px); }
+  .card.sel { border-color: #ffd43b; background: #3d2a70; }
+  .card.locked { opacity: .85; }
+  .card .ic { font-size: 38px; text-align: center; }
+  .card .nm { font-size: 18px; font-weight: bold; text-align: center; margin: 2px 0 6px; }
+  .card .st { font-size: 13px; color: #cbbcff; line-height: 1.45; }
+  .card .st b { color: #fff; }
+  .card .btn { margin-top: 8px; display: block; width: 100%; padding: 7px 0; border: 0; border-radius: 6px;
+               font-weight: bold; font-size: 14px; cursor: pointer; }
+  .btn.buy { background: #ffd43b; color: #3a2400; }
+  .btn.buy.no { background: #555; color: #aaa; cursor: not-allowed; }
+  .btn.own { background: #4ade80; color: #06310f; cursor: default; }
+  .btn.picked { background: #ffd43b; color: #3a2400; cursor: default; }
+  #startBtn {
+    margin-top: 26px; padding: 14px 54px; font-size: 24px; font-weight: bold;
+    border: 0; border-radius: 10px; background: #4ade80; color: #06310f; cursor: pointer; box-shadow: 0 6px 0 #1e8f46;
+  }
+  #hint { color: #bba9f5; font-size: 14px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="menu">
+  <h1>ARENA BRAWL PRO</h1>
+  <div id="coins"></div>
+  <div id="result"></div>
+  <h2>Personajni tanlang</h2>
+  <div class="grid" id="chars"></div>
+  <h2>Arenani tanlang</h2>
+  <div class="grid" id="arenas"></div>
+  <button id="startBtn">O'YNASH</button>
+  <div id="hint">WASD — yurish | Sichqoncha — otish | Space — SUPER | Maqsad: 12 ta kristall yig'ish</div>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const menuEl = document.getElementById("menu");
+
+// =====================================================
+//  PERSONAJLAR  (xohlagan personaj qo'shishingiz mumkin)
+// =====================================================
+const CHARS = [
+  { id: "blaze", icon: "🔥", name: "Alanga", color: "#f97316", hp: 100, speed: 230, ammo: 3, reload: 1.3, r: 20, price: 0,
+    desc: "Universal. 3 ta o'qni yelpig'ich shaklida otadi.",
+    fire: { n: 3, spread: 0.13, dmg: 14, speed: 720, life: 0.6, cool: 0.35 },
+    sup: { type: "blast", radius: 170, dmg: 55, push: 70, text: "To'lqin: yaqin dushmanlarni itaradi" } },
+  { id: "tank", icon: "🛡️", name: "Temir", color: "#64748b", hp: 200, speed: 165, ammo: 3, reload: 1.5, r: 25, price: 120,
+    desc: "Juda baquvvat, sekin. Yaqindan 5 ta o'q otadi.",
+    fire: { n: 5, spread: 0.16, dmg: 12, speed: 560, life: 0.32, cool: 0.55 },
+    sup: { type: "blast", radius: 220, dmg: 80, push: 110, text: "Zilzila: katta radiusda zarba" } },
+  { id: "sniper", icon: "🎯", name: "Ko'z", color: "#22c55e", hp: 70, speed: 215, ammo: 3, reload: 1.6, r: 18, price: 150,
+    desc: "Uzoqdan bitta kuchli o'q otadi, lekin sog'lig'i kam.",
+    fire: { n: 1, spread: 0, dmg: 48, speed: 1150, life: 0.8, cool: 0.6 },
+    sup: { type: "volley", count: 14, dmg: 20, text: "Yomg'ir: atrofga 14 ta o'q" } },
+  { id: "dash", icon: "⚡", name: "Chaqmoq", color: "#eab308", hp: 80, speed: 285, ammo: 4, reload: 1.0, r: 18, price: 180,
+    desc: "Juda tez. Ketma-ket 2 ta o'q otadi.",
+    fire: { n: 2, spread: 0.06, dmg: 11, speed: 800, life: 0.5, cool: 0.22 },
+    sup: { type: "haste", dur: 3.5, text: "Tezlanish: 3,5 soniya juda tez yuradi" } },
+  { id: "bomb", icon: "💣", name: "Bomba", color: "#a855f7", hp: 110, speed: 200, ammo: 3, reload: 1.5, r: 21, price: 220,
+    desc: "O'qi tegib portlaydi va atrofga zarar beradi.",
+    fire: { n: 1, spread: 0, dmg: 0, speed: 520, life: 0.7, cool: 0.6, explode: 75, boom: 38 },
+    sup: { type: "blast", radius: 200, dmg: 70, push: 60, text: "Portlash: atrofdagilarga zarba" } },
+  { id: "medic", icon: "💚", name: "Shifo", color: "#14b8a6", hp: 100, speed: 225, ammo: 3, reload: 1.2, r: 20, price: 200,
+    desc: "Dushmanga zarar beradi, hamjamoasini esa davolaydi.",
+    fire: { n: 1, spread: 0, dmg: 13, speed: 700, life: 0.55, cool: 0.3, heals: 16 },
+    sup: { type: "heal", radius: 230, heal: 70, text: "Shifo: yaqin hamjamoalarni davolaydi" } }
+];
+
+// =====================================================
+//  ARENALAR
+// =====================================================
+const ARENAS = [
+  { id: "desert", name: "Cho'l", price: 0, bg: "#c9a96b", wall: "#6b4423", wallTop: "#8a5a2f", wallLine: "#3d2410",
+    bush: "rgba(34,139,34,.78)", bushLine: "#145214", ice: false,
+    desc: "Klassik maydon: devorlar va butalar.",
+    walls: [
+      { x: 300, y: 200, w: 40, h: 200 }, { x: 300, y: 600, w: 40, h: 200 },
+      { x: 1260, y: 200, w: 40, h: 200 }, { x: 1260, y: 600, w: 40, h: 200 },
+      { x: 600, y: 90, w: 120, h: 40 }, { x: 880, y: 90, w: 120, h: 40 },
+      { x: 600, y: 870, w: 120, h: 40 }, { x: 880, y: 870, w: 120, h: 40 },
+      { x: 700, y: 300, w: 200, h: 40 }, { x: 700, y: 660, w: 200, h: 40 },
+      { x: 480, y: 460, w: 40, h: 80 }, { x: 1080, y: 460, w: 40, h: 80 }
+    ],
+    bushes: [
+      { x: 420, y: 140, w: 140, h: 130 }, { x: 1040, y: 140, w: 140, h: 130 },
+      { x: 420, y: 730, w: 140, h: 130 }, { x: 1040, y: 730, w: 140, h: 130 },
+      { x: 560, y: 400, w: 90, h: 200 }, { x: 950, y: 400, w: 90, h: 200 }
+    ] },
+  { id: "forest", name: "O'rmon", price: 150, bg: "#6aa84f", wall: "#5b3a1e", wallTop: "#7a4f28", wallLine: "#2e1c0d",
+    bush: "rgba(20,100,30,.82)", bushLine: "#0c4a16", ice: false,
+    desc: "Butalar juda ko'p — pistirma uchun ajoyib.",
+    walls: [
+      { x: 560, y: 250, w: 40, h: 120 }, { x: 1000, y: 250, w: 40, h: 120 },
+      { x: 560, y: 630, w: 40, h: 120 }, { x: 1000, y: 630, w: 40, h: 120 },
+      { x: 700, y: 200, w: 200, h: 40 }, { x: 700, y: 760, w: 200, h: 40 },
+      { x: 380, y: 460, w: 40, h: 80 }, { x: 1180, y: 460, w: 40, h: 80 }
+    ],
+    bushes: [
+      { x: 250, y: 100, w: 200, h: 150 }, { x: 1150, y: 100, w: 200, h: 150 },
+      { x: 250, y: 750, w: 200, h: 150 }, { x: 1150, y: 750, w: 200, h: 150 },
+      { x: 650, y: 420, w: 60, h: 160 }, { x: 890, y: 420, w: 60, h: 160 },
+      { x: 720, y: 60, w: 160, h: 90 }, { x: 720, y: 850, w: 160, h: 90 }
+    ] },
+  { id: "ice", name: "Muz", price: 250, bg: "#b8e4f5", wall: "#4f7fa3", wallTop: "#7cb4d9", wallLine: "#25506f",
+    bush: "rgba(30,110,150,.55)", bushLine: "#1b5d82", ice: true,
+    desc: "Sirpanchiq muz: harakatda sirg'anasiz!",
+    walls: [
+      { x: 400, y: 250, w: 60, h: 60 }, { x: 400, y: 690, w: 60, h: 60 },
+      { x: 1140, y: 250, w: 60, h: 60 }, { x: 1140, y: 690, w: 60, h: 60 },
+      { x: 700, y: 150, w: 60, h: 60 }, { x: 840, y: 150, w: 60, h: 60 },
+      { x: 700, y: 790, w: 60, h: 60 }, { x: 840, y: 790, w: 60, h: 60 },
+      { x: 560, y: 470, w: 60, h: 60 }, { x: 980, y: 470, w: 60, h: 60 }
+    ],
+    bushes: [
+      { x: 150, y: 420, w: 120, h: 160 }, { x: 1330, y: 420, w: 120, h: 160 },
+      { x: 600, y: 60, w: 100, h: 80 }, { x: 900, y: 860, w: 100, h: 80 }
+    ] }
+];
+
+// ---------- Konstantalar ----------
+const AW = 1600, AH = 1000, WIN_SCORE = 12, RESPAWN = 3;
+const BLUE = 0, RED = 1, TEAM_COLOR = ["#3b82f6", "#ef4444"];
+
+// ---------- Saqlash (tanga, sotib olingan narsalar) ----------
+let save = { coins: 0, chars: ["blaze"], arenas: ["desert"], selChar: "blaze", selArena: "desert" };
+try {
+  const raw = localStorage.getItem("arenaBrawlPro");
+  if (raw) save = Object.assign(save, JSON.parse(raw));
+} catch (e) {}
+function persist() { try { localStorage.setItem("arenaBrawlPro", JSON.stringify(save)); } catch (e) {} }
+
+// ---------- O'yin holati ----------
+let WALLS = [], BUSHES = [], ARENA = ARENAS[0];
+let brawlers, bullets, gems, rings, floaters;
+let score, running = false, ended = false, gemTimer, shake = 0;
+const keys = {}, mouse = { x: 0, y: 0, down: false };
+let scale = 1, offX = 0, offY = 0;
+
+const rand = (a, b) => a + Math.random() * (b - a);
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const charById = id => CHARS.find(c => c.id === id);
+const arenaById = id => ARENAS.find(a => a.id === id);
+
+function resize() {
+  canvas.width = innerWidth; canvas.height = innerHeight;
+  scale = Math.min(canvas.width / AW, canvas.height / AH);
+  offX = (canvas.width - AW * scale) / 2;
+  offY = (canvas.height - AH * scale) / 2;
+}
+addEventListener("resize", resize); resize();
+const worldMouse = () => ({ x: (mouse.x - offX) / scale, y: (mouse.y - offY) / scale });
+
+// =====================================================
+//  MENYU
+// =====================================================
+function renderMenu(resultText) {
+  document.getElementById("coins").textContent = "🪙 " + save.coins;
+  document.getElementById("result").innerHTML = resultText || "";
+
+  const charsEl = document.getElementById("chars");
+  charsEl.innerHTML = "";
+  CHARS.forEach(c => {
+    const owned = save.chars.includes(c.id);
+    const card = document.createElement("div");
+    card.className = "card" + (save.selChar === c.id ? " sel" : "") + (owned ? "" : " locked");
+    card.innerHTML = `<div class="ic">${c.icon}</div><div class="nm" style="color:${c.color}">${c.name}</div>
+      <div class="st">${c.desc}<br><b>HP:</b> ${c.hp} &nbsp; <b>Tezlik:</b> ${c.speed}<br>
+      <b>Super:</b> ${c.sup.text}</div>`;
+    card.appendChild(makeButton(owned, save.selChar === c.id, c.price, () => buy("chars", c), () => { save.selChar = c.id; persist(); renderMenu(resultText); }));
+    if (owned) card.onclick = () => { save.selChar = c.id; persist(); renderMenu(resultText); };
+    charsEl.appendChild(card);
+  });
+
+  const arEl = document.getElementById("arenas");
+  arEl.innerHTML = "";
+  ARENAS.forEach(a => {
+    const owned = save.arenas.includes(a.id);
+    const card = document.createElement("div");
+    card.className = "card" + (save.selArena === a.id ? " sel" : "") + (owned ? "" : " locked");
+    card.innerHTML = `<div class="ic">${a.id === "desert" ? "🏜️" : a.id === "forest" ? "🌲" : "🧊"}</div>
+      <div class="nm">${a.name}</div><div class="st">${a.desc}</div>`;
+    card.appendChild(makeButton(owned, save.selArena === a.id, a.price, () => buy("arenas", a), () => { save.selArena = a.id; persist(); renderMenu(resultText); }));
+    if (owned) card.onclick = () => { save.selArena = a.id; persist(); renderMenu(resultText); };
+    arEl.appendChild(card);
+  });
+}
+
+function makeButton(owned, picked, price, onBuy, onPick) {
+  const b = document.createElement("button");
+  b.className = "btn";
+  if (owned) {
+    b.classList.add(picked ? "picked" : "own");
+    b.textContent = picked ? "✔ Tanlangan" : "Tanlash";
+    b.onclick = e => { e.stopPropagation(); if (!picked) onPick(); };
+  } else {
+    b.classList.add("buy");
+    if (save.coins < price) b.classList.add("no");
+    b.textContent = "🪙 " + price + " — sotib olish";
+    b.onclick = e => { e.stopPropagation(); onBuy(); };
+  }
+  return b;
+}
+
+function buy(kind, item) {
+  if (save[kind].includes(item.id)) return;
+  if (save.coins < item.price) { renderMenu(`<span style="color:#ff8787">Tanga yetmaydi! O'ynab tanga yig'ing.</span>`); return; }
+  save.coins -= item.price;
+  save[kind].push(item.id);
+  if (kind === "chars") save.selChar = item.id; else save.selArena = item.id;
+  persist();
+  renderMenu(`<span style="color:#8ce99a">${item.name} sotib olindi!</span>`);
+}
+
+document.getElementById("startBtn").onclick = () => {
+  newGame(); running = true; menuEl.style.display = "none";
+};
+
+// =====================================================
+//  O'YINNI BOSHLASH
+// =====================================================
+function makeBrawler(team, idx, isPlayer, def) {
+  const sx = team === BLUE ? 130 : AW - 130, sy = 280 + idx * 220;
+  return {
+    team, isPlayer, def, x: sx, y: sy, sx, sy, vx: 0, vy: 0, r: def.r, hp: def.hp, max: def.hp,
+    ammo: def.ammo, reload: 0, cool: 0, sup: 0, angle: team === BLUE ? 0 : Math.PI, dead: 0, lastHit: 0, haste: 0,
+    speed: isPlayer ? def.speed : def.speed * rand(0.82, 0.92), strafe: Math.random() < .5 ? 1 : -1, strafeT: 0, gemsGot: 0
+  };
+}
+
+function newGame() {
+  ARENA = arenaById(save.selArena) || ARENAS[0];
+  WALLS = ARENA.walls; BUSHES = ARENA.bushes;
+  const pick = () => CHARS[Math.floor(Math.random() * CHARS.length)];
+  brawlers = [
+    makeBrawler(BLUE, 1, true, charById(save.selChar) || CHARS[0]),
+    makeBrawler(BLUE, 0, false, pick()), makeBrawler(BLUE, 2, false, pick()),
+    makeBrawler(RED, 0, false, pick()), makeBrawler(RED, 1, false, pick()), makeBrawler(RED, 2, false, pick())
+  ];
+  bullets = []; gems = []; rings = []; floaters = [];
+  score = [0, 0]; gemTimer = 1; ended = false; shake = 0;
+}
+
+// ---------- Kiritish ----------
+addEventListener("keydown", e => {
+  keys[e.code] = true;
+  if (e.code === "Space") { e.preventDefault(); if (running) useSuper(brawlers[0]); }
+});
+addEventListener("keyup", e => { keys[e.code] = false; });
+canvas.addEventListener("mousemove", e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+canvas.addEventListener("mousedown", () => { mouse.down = true; });
+addEventListener("mouseup", () => { mouse.down = false; });
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+// ---------- Geometriya ----------
+function pushOutOfRect(e, r) {
+  const cx = Math.max(r.x, Math.min(e.x, r.x + r.w)), cy = Math.max(r.y, Math.min(e.y, r.y + r.h));
+  const dx = e.x - cx, dy = e.y - cy, d = Math.hypot(dx, dy);
+  if (d < e.r) {
+    if (d === 0) { e.y -= e.r; return; }
+    e.x = cx + dx / d * e.r; e.y = cy + dy / d * e.r;
+  }
+}
+function collide(e) {
+  for (const w of WALLS) pushOutOfRect(e, w);
+  e.x = Math.max(e.r, Math.min(AW - e.r, e.x));
+  e.y = Math.max(e.r, Math.min(AH - e.r, e.y));
+}
+const inRect = (x, y, r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+const inBush = e => BUSHES.some(b => inRect(e.x, e.y, b));
+function lineBlocked(a, b) {
+  const steps = Math.ceil(dist(a, b) / 15);
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps, x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+    if (WALLS.some(w => inRect(x, y, w))) return true;
+  }
+  return false;
+}
+function visibleTo(e, team) {
+  if (e.team === team || !inBush(e)) return true;
+  return brawlers.some(m => m.team === team && !m.dead && dist(m, e) < 150);
+}
+
+// =====================================================
+//  JANG
+// =====================================================
+function fire(b, angle) {
+  const f = b.def.fire;
+  if (b.ammo < 1 || b.cool > 0 || b.dead) return;
+  b.ammo--; b.cool = f.cool;
+  if (b.reload <= 0) b.reload = b.def.reload;
+  for (let i = 0; i < f.n; i++) {
+    const a = angle + (i - (f.n - 1) / 2) * f.spread;
+    bullets.push({ x: b.x + Math.cos(a) * (b.r + 6), y: b.y + Math.sin(a) * (b.r + 6),
+      vx: Math.cos(a) * f.speed, vy: Math.sin(a) * f.speed, life: f.life, owner: b, f });
+  }
+}
+
+function damage(t, dmg, owner) {
+  t.hp -= dmg; t.lastHit = 0;
+  floaters.push({ x: t.x, y: t.y - 28, text: "-" + Math.round(dmg), life: 0.7 });
+  if (owner) owner.sup = Math.min(100, owner.sup + dmg * 0.7);
+  if (t.hp <= 0 && !t.dead) {
+    t.dead = RESPAWN; t.hp = 0; shake = 6;
+    rings.push({ x: t.x, y: t.y, r: 5, max: 60, color: "#fff" });
+  }
+}
+function heal(t, amount, owner) {
+  const real = Math.min(amount, t.max - t.hp);
+  if (real <= 0) return;
+  t.hp += real;
+  floaters.push({ x: t.x, y: t.y - 28, text: "+" + Math.round(real), life: 0.7, green: true });
+  if (owner) owner.sup = Math.min(100, owner.sup + real * 0.5);
+}
+
+function explode(bl) {
+  const f = bl.f, o = bl.owner;
+  rings.push({ x: bl.x, y: bl.y, r: 8, max: f.explode, color: TEAM_COLOR[o.team] });
+  for (const t of brawlers) {
+    if (t.team === o.team || t.dead) continue;
+    if (Math.hypot(t.x - bl.x, t.y - bl.y) < f.explode + t.r) damage(t, f.boom, o);
+  }
+}
+
+function useSuper(b) {
+  if (b.dead || b.sup < 100) return;
+  b.sup = 0;
+  const s = b.def.sup;
+  if (s.type === "blast") {
+    rings.push({ x: b.x, y: b.y, r: 10, max: s.radius, color: TEAM_COLOR[b.team] });
+    shake = 8;
+    for (const t of brawlers) {
+      if (t.team === b.team || t.dead || dist(b, t) > s.radius) continue;
+      damage(t, s.dmg, b);
+      const a = Math.atan2(t.y - b.y, t.x - b.x);
+      t.x += Math.cos(a) * s.push; t.y += Math.sin(a) * s.push; collide(t);
+    }
+  } else if (s.type === "heal") {
+    rings.push({ x: b.x, y: b.y, r: 10, max: s.radius, color: "#4ade80" });
+    for (const t of brawlers) if (t.team === b.team && !t.dead && dist(b, t) <= s.radius) heal(t, s.heal, null);
+  } else if (s.type === "haste") {
+    b.haste = s.dur;
+    rings.push({ x: b.x, y: b.y, r: 10, max: 90, color: "#facc15" });
+  } else if (s.type === "volley") {
+    shake = 5;
+    const f = { dmg: s.dmg, speed: 780, life: 0.7 };
+    for (let i = 0; i < s.count; i++) {
+      const a = (i / s.count) * Math.PI * 2;
+      bullets.push({ x: b.x + Math.cos(a) * (b.r + 6), y: b.y + Math.sin(a) * (b.r + 6),
+        vx: Math.cos(a) * f.speed, vy: Math.sin(a) * f.speed, life: f.life, owner: b, f });
+    }
+  }
+}
+
+function moveBrawler(b, mx, my, dt) {
+  const l = Math.hypot(mx, my);
+  let tx = 0, ty = 0;
+  if (l > 0) { const sp = b.speed * (b.haste > 0 ? 1.7 : 1); tx = mx / l * sp; ty = my / l * sp; }
+  const k = Math.min(1, (ARENA.ice ? 2.2 : 18) * dt);
+  b.vx += (tx - b.vx) * k; b.vy += (ty - b.vy) * k;
+  b.x += b.vx * dt; b.y += b.vy * dt;
+}
+
+// =====================================================
+//  BOT SUN'IY INTELLEKTI
+// =====================================================
+function botAI(b, dt) {
+  const f = b.def.fire;
+  const range = f.speed * f.life * 0.92;
+  const enemies = brawlers.filter(e => e.team !== b.team && !e.dead && visibleTo(e, b.team));
+  let target = null, best = 9999;
+  for (const e of enemies) { const d = dist(b, e); if (d < best) { best = d; target = e; } }
+
+  let mx = 0, my = 0;
+  const seeRange = Math.max(480, range + 80);
+
+  if (b.hp < b.max * 0.33) {
+    mx = b.sx - b.x; my = b.sy - b.y;
+    if (target && best < range && !lineBlocked(b, target)) { b.angle = Math.atan2(target.y - b.y, target.x - b.x); if (Math.random() < dt * 4) fire(b, b.angle); }
+  } else if (target && best < seeRange) {
+    const a = Math.atan2(target.y - b.y, target.x - b.x);
+    b.strafeT -= dt;
+    if (b.strafeT <= 0) { b.strafe = -b.strafe; b.strafeT = rand(0.8, 2); }
+    if (best > range * 0.75) { mx = Math.cos(a); my = Math.sin(a); }
+    else if (best < range * 0.3 && b.def.id !== "tank") { mx = -Math.cos(a); my = -Math.sin(a); }
+    mx += Math.cos(a + Math.PI / 2) * b.strafe * 0.7;
+    my += Math.sin(a + Math.PI / 2) * b.strafe * 0.7;
+    b.angle = a;
+    if (!lineBlocked(b, target)) {
+      b.angle = a + rand(-0.04, 0.04);
+      if (best < range * 1.05 && Math.random() < dt * 6) fire(b, b.angle);
+      if (b.sup >= 100) {
+        const s = b.def.sup;
+        if (s.type === "blast" && best < s.radius * 0.85) useSuper(b);
+        else if (s.type === "volley" && best < 420) useSuper(b);
+        else if (s.type === "haste" && best > 250) useSuper(b);
+      }
+    }
+  } else {
+    let g = null, gd = 9999;
+    for (const gem of gems) { const d = dist(b, gem); if (d < gd) { gd = d; g = gem; } }
+    const tx = g ? g.x : AW / 2, ty = g ? g.y : AH / 2;
+    mx = tx - b.x; my = ty - b.y;
+    b.angle = Math.atan2(my, mx);
+  }
+
+  // davolovchi bot
+  if (b.def.sup.type === "heal" && b.sup >= 100) {
+    const hurt = brawlers.filter(t => t.team === b.team && !t.dead && t.hp < t.max * 0.6 && dist(b, t) < b.def.sup.radius);
+    if (hurt.length >= 1) useSuper(b);
+  }
+  moveBrawler(b, mx, my, dt);
+}
+
+// =====================================================
+//  YANGILASH
+// =====================================================
+function update(dt) {
+  shake = Math.max(0, shake - dt * 30);
+
+  gemTimer -= dt;
+  if (gemTimer <= 0 && gems.length < 8) {
+    gems.push({ x: AW / 2 + rand(-90, 90), y: AH / 2 + rand(-110, 110) });
+    gemTimer = 2.2;
+  }
+
+  for (const b of brawlers) {
+    if (b.dead) {
+      b.dead -= dt;
+      if (b.dead <= 0) { b.dead = 0; b.hp = b.max; b.x = b.sx; b.y = b.sy; b.vx = b.vy = 0; b.ammo = b.def.ammo; b.haste = 0; }
+      continue;
+    }
+    b.cool -= dt; b.lastHit += dt; if (b.haste > 0) b.haste -= dt;
+    if (b.lastHit > 3 && b.hp < b.max) b.hp = Math.min(b.max, b.hp + 18 * dt);
+    if (b.ammo < b.def.ammo) {
+      b.reload -= dt;
+      if (b.reload <= 0) { b.ammo++; b.reload = b.ammo < b.def.ammo ? b.def.reload : 0; }
+    }
+
+    if (b.isPlayer) {
+      let mx = 0, my = 0;
+      if (keys.KeyW || keys.ArrowUp) my -= 1;
+      if (keys.KeyS || keys.ArrowDown) my += 1;
+      if (keys.KeyA || keys.ArrowLeft) mx -= 1;
+      if (keys.KeyD || keys.ArrowRight) mx += 1;
+      moveBrawler(b, mx, my, dt);
+      const m = worldMouse();
+      b.angle = Math.atan2(m.y - b.y, m.x - b.x);
+      if (mouse.down) fire(b, b.angle);
+    } else {
+      botAI(b, dt);
+    }
+    collide(b);
+
+    for (let i = gems.length - 1; i >= 0; i--) {
+      if (dist(b, gems[i]) < b.r + 12) {
+        gems.splice(i, 1);
+        score[b.team]++; b.gemsGot++;
+        floaters.push({ x: b.x, y: b.y - 32, text: "+1 💎", life: 0.8 });
+        if (score[b.team] >= WIN_SCORE) endGame(b.team);
+      }
+    }
+  }
+
+  // o'qlar
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const bl = bullets[i];
+    bl.x += bl.vx * dt; bl.y += bl.vy * dt; bl.life -= dt;
+    let remove = bl.life <= 0 || bl.x < 0 || bl.x > AW || bl.y < 0 || bl.y > AH;
+    if (!remove && WALLS.some(w => inRect(bl.x, bl.y, w))) remove = true;
+    if (!remove) {
+      for (const t of brawlers) {
+        if (t.dead || t === bl.owner) continue;
+        if (Math.hypot(bl.x - t.x, bl.y - t.y) >= t.r + 3) continue;
+        if (t.team === bl.owner.team) {
+          if (!bl.f.heals) continue;
+          heal(t, bl.f.heals, bl.owner); remove = true; break;
+        }
+        if (bl.f.dmg > 0) damage(t, bl.f.dmg, bl.owner);
+        remove = true; break;
+      }
+    }
+    if (remove) {
+      if (bl.f.explode) explode(bl);
+      bullets.splice(i, 1);
+    }
+  }
+
+  for (const r of rings) r.r += (r.max - r.r) * Math.min(1, dt * 9) + 30 * dt;
+  rings = rings.filter(r => r.r < r.max - 2);
+  for (const f of floaters) { f.y -= 40 * dt; f.life -= dt; }
+  floaters = floaters.filter(f => f.life > 0);
+}
+
+function endGame(team) {
+  if (ended) return;
+  ended = true; running = false;
+  const win = team === BLUE;
+  const me = brawlers[0];
+  const reward = 20 + me.gemsGot * 4 + (win ? 50 : 0);
+  save.coins += reward; persist();
+  const text = `<span style="color:${win ? "#ffd43b" : "#ff8787"};font-size:26px">${win ? "🏆 G'ALABA!" : "MAG'LUBIYAT"}</span><br>
+    Hisob: ${score[BLUE]} : ${score[RED]} &nbsp;|&nbsp; Siz yig'dingiz: ${me.gemsGot} 💎<br>
+    <span style="color:#ffd43b">Mukofot: +${reward} 🪙</span>`;
+  renderMenu(text);
+  document.getElementById("startBtn").textContent = "QAYTA O'YNASH";
+  menuEl.style.display = "block";
+  menuEl.scrollTop = 0;
+}
+
+// =====================================================
+//  CHIZISH
+// =====================================================
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function draw() {
+  ctx.fillStyle = "#1b1033"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(offX, offY); ctx.scale(scale, scale);
+  if (shake > 0) ctx.translate(rand(-shake, shake) * .4, rand(-shake, shake) * .4);
+
+  // maydon
+  ctx.fillStyle = ARENA.bg; ctx.fillRect(0, 0, AW, AH);
+  ctx.fillStyle = "rgba(0,0,0,.05)";
+  for (let x = 0; x < AW; x += 80) for (let y = 0; y < AH; y += 80) if (((x + y) / 80) % 2 === 0) ctx.fillRect(x, y, 80, 80);
+  ctx.fillStyle = "rgba(59,130,246,.2)"; ctx.fillRect(0, 0, 220, AH);
+  ctx.fillStyle = "rgba(239,68,68,.2)"; ctx.fillRect(AW - 220, 0, 220, AH);
+  ctx.fillStyle = "rgba(255,255,255,.14)"; ctx.beginPath(); ctx.arc(AW / 2, AH / 2, 150, 0, 7); ctx.fill();
+  ctx.strokeStyle = "#3b2a14"; ctx.lineWidth = 10; ctx.strokeRect(0, 0, AW, AH);
+
+  // kristallar
+  const now = performance.now() / 1000;
+  for (const g of gems) {
+    const bob = Math.sin(now * 4 + g.x) * 3;
+    ctx.fillStyle = "#a855f7"; ctx.strokeStyle = "#f3e8ff"; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(g.x, g.y - 13 + bob); ctx.lineTo(g.x + 11, g.y + bob);
+    ctx.lineTo(g.x, g.y + 13 + bob); ctx.lineTo(g.x - 11, g.y + bob); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  }
+
+  // halqalar
+  for (const r of rings) {
+    ctx.strokeStyle = r.color; ctx.lineWidth = 6; ctx.globalAlpha = Math.max(0, 1 - r.r / r.max);
+    ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, 7); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // brawlerlar
+  for (const b of brawlers) {
+    if (b.dead || !visibleTo(b, BLUE)) continue;
+    ctx.globalAlpha = inBush(b) ? 0.55 : 1;
+    drawBrawler(b);
+    ctx.globalAlpha = 1;
+  }
+
+  // o'qlar
+  for (const bl of bullets) {
+    ctx.fillStyle = bl.f.heals ? "#4ade80" : TEAM_COLOR[bl.owner.team];
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(bl.x, bl.y, bl.f.explode ? 9 : 6, 0, 7); ctx.fill(); ctx.stroke();
+  }
+
+  // devorlar
+  for (const w of WALLS) {
+    ctx.fillStyle = ARENA.wall; ctx.fillRect(w.x, w.y, w.w, w.h);
+    ctx.fillStyle = ARENA.wallTop; ctx.fillRect(w.x, w.y, w.w, Math.min(10, w.h));
+    ctx.strokeStyle = ARENA.wallLine; ctx.lineWidth = 3; ctx.strokeRect(w.x, w.y, w.w, w.h);
+  }
+  // butalar
+  for (const bu of BUSHES) {
+    ctx.fillStyle = ARENA.bush; roundRect(bu.x, bu.y, bu.w, bu.h, 22); ctx.fill();
+    ctx.strokeStyle = ARENA.bushLine; ctx.lineWidth = 3; ctx.stroke();
+  }
+
+  // yozuvlar
+  for (const f of floaters) {
+    ctx.globalAlpha = Math.min(1, f.life * 2);
+    ctx.fillStyle = f.green ? "#86efac" : "#fff"; ctx.strokeStyle = "#000"; ctx.lineWidth = 3;
+    ctx.font = "bold 18px Arial"; ctx.textAlign = "center";
+    ctx.strokeText(f.text, f.x, f.y); ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+
+  const me = brawlers[0];
+  if (me.dead) {
+    ctx.fillStyle = "rgba(0,0,0,.55)"; ctx.fillRect(AW / 2 - 170, AH / 2 - 40, 340, 80);
+    ctx.fillStyle = "#fff"; ctx.font = "bold 26px Arial"; ctx.textAlign = "center";
+    ctx.fillText("Qayta tirilish: " + Math.ceil(me.dead), AW / 2, AH / 2 + 9);
+  }
+  ctx.restore();
+  drawHUD();
+}
+
+function drawBrawler(b) {
+  ctx.fillStyle = "rgba(0,0,0,.25)"; ctx.beginPath(); ctx.ellipse(b.x, b.y + b.r - 4, b.r * .9, 8, 0, 0, 7); ctx.fill();
+  if (b.haste > 0) { ctx.strokeStyle = "rgba(250,204,21,.7)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(b.x, b.y, b.r + 8, 0, 7); ctx.stroke(); }
+  ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.angle);
+  ctx.fillStyle = "#333"; ctx.fillRect(b.r - 6, -4, 24, 8);
+  ctx.restore();
+  ctx.fillStyle = b.def.color; ctx.strokeStyle = TEAM_COLOR[b.team]; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.font = Math.round(b.r * 1.1) + "px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(b.def.icon, b.x, b.y + 1); ctx.textBaseline = "alphabetic";
+  // sog'liq
+  const bw = Math.max(48, b.r * 2.2);
+  ctx.fillStyle = "#000"; ctx.fillRect(b.x - bw / 2 - 1, b.y - b.r - 18, bw + 2, 8);
+  ctx.fillStyle = b.team === BLUE ? "#4ade80" : "#f87171";
+  ctx.fillRect(b.x - bw / 2, b.y - b.r - 17, bw * Math.max(0, b.hp) / b.max, 6);
+  if (b.isPlayer) { ctx.fillStyle = "#ffd43b"; ctx.font = "bold 13px Arial"; ctx.fillText("SIZ", b.x, b.y - b.r - 24); }
+}
+
+function drawHUD() {
+  const W = canvas.width, H = canvas.height;
+  ctx.textAlign = "center";
+  ctx.fillStyle = "rgba(0,0,0,.5)"; ctx.fillRect(W / 2 - 110, 10, 220, 46);
+  ctx.font = "bold 28px Arial";
+  ctx.fillStyle = TEAM_COLOR[BLUE]; ctx.fillText("💎 " + score[BLUE], W / 2 - 55, 44);
+  ctx.fillStyle = "#fff"; ctx.fillText(":", W / 2, 43);
+  ctx.fillStyle = TEAM_COLOR[RED]; ctx.fillText(score[RED] + " 💎", W / 2 + 55, 44);
+  ctx.font = "13px Arial"; ctx.fillStyle = "#ddd";
+  ctx.fillText(`Maqsad: ${WIN_SCORE}  |  ${ARENA.name}`, W / 2, 72);
+
+  const me = brawlers[0];
+  if (!me) return;
+  for (let i = 0; i < me.def.ammo; i++) {
+    ctx.fillStyle = i < me.ammo ? "#ffd43b" : "rgba(255,255,255,.2)";
+    ctx.fillRect(20 + i * 50, H - 50, 44, 18);
+  }
+  ctx.fillStyle = "rgba(0,0,0,.5)"; ctx.fillRect(20, H - 90, 170, 22);
+  ctx.fillStyle = me.sup >= 100 ? "#ffd43b" : "#a855f7";
+  ctx.fillRect(22, H - 88, 166 * me.sup / 100, 18);
+  ctx.fillStyle = "#fff"; ctx.font = "bold 13px Arial"; ctx.textAlign = "left";
+  ctx.fillText(me.sup >= 100 ? "SUPER TAYYOR! (Space)" : "SUPER", 28, H - 74);
+  ctx.fillText(me.def.icon + " " + me.def.name, 20, H - 100);
+}
+
+// =====================================================
+//  ASOSIY SIKL
+// =====================================================
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (running) update(dt);
+  if (brawlers) draw();
+  requestAnimationFrame(loop);
+}
+renderMenu();
+newGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
