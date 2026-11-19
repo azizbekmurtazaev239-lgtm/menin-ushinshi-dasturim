@@ -1,0 +1,516 @@
+!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fight Arena</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0d0614; overflow: hidden; font-family: Arial, sans-serif; }
+  canvas { display: block; }
+  #menu {
+    position: fixed; inset: 0; z-index: 5; overflow-y: auto;
+    background: rgba(13,6,20,.93); color: #fff; text-align: center; padding: 24px 16px 40px;
+  }
+  #menu h1 { font-size: 46px; margin: 6px 0; letter-spacing: 4px; color: #ff6b35; text-shadow: 0 4px 0 #5a1a00; }
+  #result { min-height: 30px; font-size: 24px; font-weight: bold; margin: 8px 0 14px; }
+  .row { margin: 10px 0; font-size: 17px; }
+  select {
+    font-size: 16px; padding: 8px 12px; border-radius: 6px; border: 2px solid #6b3fa0;
+    background: #2a1347; color: #fff; margin: 0 6px;
+  }
+  .info { max-width: 720px; margin: 18px auto 0; text-align: left; background: #1d0e33; border-radius: 10px; padding: 12px 18px; font-size: 14px; line-height: 1.7; color: #d4c4f5; }
+  .info b { color: #ffd43b; }
+  #startBtn {
+    margin-top: 22px; padding: 14px 54px; font-size: 24px; font-weight: bold; border: 0; border-radius: 10px;
+    background: #ff6b35; color: #2a0d00; cursor: pointer; box-shadow: 0 6px 0 #a3330a;
+  }
+  #fdesc { font-size: 13px; color: #b9a6e8; margin-top: 4px; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="menu">
+  <h1>FIGHT ARENA</h1>
+  <div id="result"></div>
+  <div class="row">Rejim:
+    <select id="mode">
+      <option value="1">1 o'yinchi (kompyuterga qarshi)</option>
+      <option value="2">2 o'yinchi (bir klaviaturada)</option>
+    </select>
+  </div>
+  <div class="row">1-o'yinchi: <select id="f1"></select>
+    <span id="p2label">Kompyuter:</span> <select id="f2"></select>
+  </div>
+  <div id="fdesc"></div>
+  <div class="info">
+    <b>1-o'yinchi:</b> A / D — yurish, W — sakrash, S — himoya, F — musht, G — tepish, H — maxsus zarba (energiya 50 kerak)<br>
+    <b>2-o'yinchi:</b> ← / → — yurish, ↑ — sakrash, ↓ — himoya, J — musht, K — tepish, L — maxsus zarba<br>
+    3 raunddan 2 tasini yutgan g'olib bo'ladi. Har raund 60 soniya. Zarba bergan sari energiya to'planadi.
+  </div>
+  <button id="startBtn">JANGNI BOSHLASH</button>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = 1000, H = 500, GROUND = 430, ROUND_TIME = 60;
+let scale = 1, offX = 0, offY = 0;
+
+function resize() {
+  canvas.width = innerWidth; canvas.height = innerHeight;
+  scale = Math.min(canvas.width / W, canvas.height / H);
+  offX = (canvas.width - W * scale) / 2; offY = (canvas.height - H * scale) / 2;
+}
+addEventListener("resize", resize); resize();
+
+// =====================================================
+//  JANGCHILAR (yangi qo'shish uchun shu ro'yxatga blok qo'shing)
+// =====================================================
+const FIGHTERS = [
+  { id: "olov",  name: "Olov",   hp: 100, speed: 260, dmg: 1.0,  color: "#e8501c", pants: "#5a1a0a", band: "#ffd43b", skin: "#f1c9a0",
+    proj: { speed: 560, dmg: 14, r: 15, color: "#ff8a2b" }, desc: "Muvozanatli jangchi. Olov to'pi tez uchadi." },
+  { id: "muz",   name: "Muz",    hp: 105, speed: 235, dmg: 1.0,  color: "#2b8fd6", pants: "#12345a", band: "#e0f4ff", skin: "#e8d2bc",
+    proj: { speed: 430, dmg: 18, r: 17, color: "#8fe3ff" }, desc: "Muz sharlari sekin, lekin kuchliroq." },
+  { id: "shamol", name: "Shamol", hp: 90,  speed: 330, dmg: 0.95, color: "#38b36a", pants: "#175230", band: "#fff", skin: "#d9a877",
+    proj: { speed: 700, dmg: 12, r: 13, color: "#9bf2b8" }, desc: "Juda tez, lekin sog'lig'i kam." },
+  { id: "tosh",  name: "Tosh",   hp: 130, speed: 190, dmg: 1.18, color: "#7d7468", pants: "#3b352d", band: "#ff6b6b", skin: "#c99a74",
+    proj: { speed: 400, dmg: 20, r: 19, color: "#c9b79c" }, desc: "Sekin, lekin baquvvat va zarbasi og'ir." }
+];
+
+const ATK = {
+  punch:   { start: 0.07, active: 0.12, dur: 0.28, range: 70, dmg: 7 },
+  kick:    { start: 0.14, active: 0.12, dur: 0.45, range: 98, dmg: 11 },
+  special: { start: 0.22, active: 0,    dur: 0.55, range: 0,  dmg: 0 }
+};
+
+// =====================================================
+//  HOLAT
+// =====================================================
+let p1, p2, projectiles, sparks;
+let state = "menu";           // menu | intro | fight | roundEnd
+let timer, introT, endT, round, wins, msg, shake = 0, vsAI = true;
+let selected = [FIGHTERS[0], FIGHTERS[1]];
+const keys = {};
+
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+const CTRL1 = { l: "KeyA", r: "KeyD", u: "KeyW", d: "KeyS", punch: "KeyF", kick: "KeyG", special: "KeyH" };
+const CTRL2 = { l: "ArrowLeft", r: "ArrowRight", u: "ArrowUp", d: "ArrowDown", punch: "KeyJ", kick: "KeyK", special: "KeyL" };
+
+addEventListener("keydown", e => {
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space"].includes(e.code)) e.preventDefault();
+  if (e.repeat) { keys[e.code] = true; return; }
+  keys[e.code] = true;
+  if (state !== "fight") return;
+  for (const f of [p1, p2]) {
+    if (!f.human) continue;
+    if (e.code === f.ctrl.punch) f.queued = "punch";
+    else if (e.code === f.ctrl.kick) f.queued = "kick";
+    else if (e.code === f.ctrl.special) f.queued = "special";
+  }
+});
+addEventListener("keyup", e => { keys[e.code] = false; });
+
+// =====================================================
+//  MENYU
+// =====================================================
+const f1El = document.getElementById("f1"), f2El = document.getElementById("f2");
+const modeEl = document.getElementById("mode"), fdescEl = document.getElementById("fdesc");
+FIGHTERS.forEach((f, i) => {
+  f1El.add(new Option(f.name, i));
+  f2El.add(new Option(f.name, i));
+});
+f2El.value = "1";
+function updateDesc() {
+  const a = FIGHTERS[f1El.value], b = FIGHTERS[f2El.value];
+  fdescEl.textContent = `${a.name}: ${a.desc}  |  ${b.name}: ${b.desc}`;
+  document.getElementById("p2label").textContent = modeEl.value === "1" ? "Kompyuter:" : "2-o'yinchi:";
+}
+[f1El, f2El, modeEl].forEach(el => el.addEventListener("change", updateDesc));
+updateDesc();
+
+document.getElementById("startBtn").onclick = () => {
+  selected = [FIGHTERS[f1El.value], FIGHTERS[f2El.value]];
+  vsAI = modeEl.value === "1";
+  wins = [0, 0]; round = 1;
+  document.getElementById("menu").style.display = "none";
+  startRound();
+};
+
+// =====================================================
+//  RAUND
+// =====================================================
+function newFighter(def, x, face, human, ctrl) {
+  return {
+    def, x, y: GROUND, vx: 0, vy: 0, face, hp: def.hp, max: def.hp, energy: 0,
+    atk: null, stun: 0, block: false, onGround: true, walk: 0, queued: null,
+    human, ctrl, ko: false, ai: { t: 0, left: false, right: false, block: false, jump: false }
+  };
+}
+
+function startRound() {
+  p1 = newFighter(selected[0], 250, 1, true, CTRL1);
+  p2 = newFighter(selected[1], 750, -1, !vsAI, CTRL2);
+  projectiles = []; sparks = [];
+  timer = ROUND_TIME; state = "intro"; introT = 1.8; msg = "RAUND " + round;
+}
+
+function endRound() {
+  let winner = -1;
+  if (p1.hp <= 0 && p2.hp <= 0) winner = -1;
+  else if (p1.hp <= 0) winner = 1;
+  else if (p2.hp <= 0) winner = 0;
+  else if (p1.hp > p2.hp) winner = 0;
+  else if (p2.hp > p1.hp) winner = 1;
+  const byTime = p1.hp > 0 && p2.hp > 0;
+  if (winner >= 0) wins[winner]++;
+  msg = winner < 0 ? "DURANG!" : (byTime ? "VAQT TUGADI" : "K.O.!");
+  state = "roundEnd"; endT = 2.8;
+  if (winner >= 0) msg += "\n" + (winner === 0 ? FIGHTERS.find(f => f === p1.def).name : p2.def.name) + " yutdi";
+}
+
+function finishMatch() {
+  state = "menu";
+  const winner = wins[0] >= 2 ? 0 : 1;
+  const name = winner === 0 ? p1.def.name : p2.def.name;
+  const who = vsAI ? (winner === 0 ? "Siz yutdingiz! 🏆" : "Kompyuter yutdi") : `${winner + 1}-o'yinchi (${name}) yutdi! 🏆`;
+  document.getElementById("result").textContent = `${who}  (${wins[0]} : ${wins[1]})`;
+  document.getElementById("result").style.color = "#ffd43b";
+  document.getElementById("startBtn").textContent = "QAYTA O'YNASH";
+  document.getElementById("menu").style.display = "block";
+  document.getElementById("menu").scrollTop = 0;
+}
+
+// =====================================================
+//  JANG MEXANIKASI
+// =====================================================
+function getInput(f) {
+  if (f.human) return { left: keys[f.ctrl.l], right: keys[f.ctrl.r], jump: keys[f.ctrl.u], block: keys[f.ctrl.d] };
+  return f.ai;
+}
+
+function startAttack(f, type) {
+  if (type === "special") { if (f.energy < 50) return; f.energy -= 50; }
+  f.atk = Object.assign({ type, t: 0, hit: false, fired: false }, ATK[type]);
+  if (f.onGround) f.vx = 0;
+}
+
+function spark(x, y, color) { sparks.push({ x, y, life: 0.3, color }); }
+
+function applyHit(t, from, dmg, heavy, dir) {
+  const blocked = t.block && t.face === -dir;
+  if (blocked) {
+    t.hp -= dmg * 0.12; t.vx = dir * 150; t.energy = Math.min(100, t.energy + 2);
+    spark(t.x + dir * -20, t.y - 80, "#aaa");
+  } else {
+    t.hp -= dmg; t.stun = heavy ? 0.42 : 0.28; t.atk = null; t.vx = dir * (heavy ? 380 : 230);
+    if (heavy && t.onGround) { t.vy = -260; t.onGround = false; }
+    from.energy = Math.min(100, from.energy + 8); t.energy = Math.min(100, t.energy + 4);
+    spark(t.x, t.y - 80, "#ffe066"); shake = heavy ? 7 : 4;
+  }
+  if (t.hp <= 0) { t.hp = 0; t.ko = true; }
+}
+
+function tryHit(f, opp, a) {
+  const dx = (opp.x - f.x) * f.face;
+  if (dx > -10 && dx < a.range + 25 && Math.abs(opp.y - f.y) < 95 && !opp.ko) {
+    a.hit = true;
+    applyHit(opp, f, a.dmg * f.def.dmg, a.type === "kick", f.face);
+  }
+}
+
+function updateFighter(f, opp, dt, canAct) {
+  const inp = canAct && !f.ko ? getInput(f) : {};
+  if (f.stun > 0) f.stun -= dt;
+  const free = f.stun <= 0 && !f.ko && canAct;
+  f.block = false;
+
+  if (free && !f.atk) {
+    if (inp.block && f.onGround) f.block = true;
+    if (!f.block) {
+      const dir = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
+      if (f.onGround) f.vx = dir * f.def.speed;
+      else f.vx = clamp(f.vx + dir * 700 * dt, -f.def.speed, f.def.speed);
+      if (inp.jump && f.onGround) { f.vy = -850; f.onGround = false; }
+      if (f.queued) startAttack(f, f.queued);
+    } else f.vx = 0;
+  }
+  f.queued = null;
+
+  if (f.atk) {
+    const a = f.atk;
+    a.t += dt;
+    if (a.type === "special") {
+      if (!a.fired && a.t >= a.start) {
+        a.fired = true;
+        const pr = f.def.proj;
+        projectiles.push({ x: f.x + f.face * 40, y: f.y - 75, vx: f.face * pr.speed, dir: f.face, owner: f,
+                           dmg: pr.dmg * f.def.dmg, r: pr.r, color: pr.color });
+      }
+    } else if (!a.hit && a.t >= a.start && a.t <= a.start + a.active) {
+      tryHit(f, opp, a);
+    }
+    if (a.t >= a.dur) f.atk = null;
+  }
+  if (f.onGround && (f.stun > 0 || f.ko)) f.vx *= Math.pow(0.02, dt);
+
+  if (f.onGround && !f.atk && f.stun <= 0 && !f.ko) f.face = opp.x >= f.x ? 1 : -1;
+
+  f.vy += 2200 * dt;
+  f.y += f.vy * dt;
+  if (f.y >= GROUND) { f.y = GROUND; f.vy = 0; f.onGround = true; } else f.onGround = false;
+  f.x = clamp(f.x + f.vx * dt, 35, W - 35);
+  f.walk += Math.abs(f.vx) * dt * 0.05;
+  if (!f.ko) f.energy = Math.min(100, f.energy + 6 * dt);
+}
+
+function aiThink(f, opp, dt) {
+  const ai = f.ai;
+  ai.t -= dt;
+  if (ai.t > 0 || f.ko) return;
+  ai.t = rand(0.12, 0.3);
+  ai.left = ai.right = ai.block = ai.jump = false;
+  const dx = opp.x - f.x, d = Math.abs(dx), dir = Math.sign(dx) || 1;
+
+  if (opp.atk && d < 150 && Math.random() < 0.55) { ai.block = true; ai.t = 0.35; return; }
+  if (d > 300 && f.energy >= 50 && Math.random() < 0.35) { f.queued = "special"; return; }
+  if (d > 110) {
+    if (dir > 0) ai.right = true; else ai.left = true;
+    if (Math.random() < 0.06) ai.jump = true;
+    return;
+  }
+  const r = Math.random();
+  if (r < 0.35) f.queued = "punch";
+  else if (r < 0.6) f.queued = "kick";
+  else if (r < 0.72) { ai.block = true; ai.t = 0.4; }
+  else if (r < 0.86) { if (dir > 0) ai.left = true; else ai.right = true; }
+}
+
+function update(dt) {
+  shake = Math.max(0, shake - dt * 30);
+  for (const s of sparks) s.life -= dt;
+  sparks = sparks.filter(s => s.life > 0);
+
+  if (state === "intro") {
+    introT -= dt;
+    if (introT < 0.6) msg = "JANG!";
+    if (introT <= 0) { state = "fight"; msg = ""; }
+    return;
+  }
+
+  const acting = state === "fight";
+  if (acting && !p2.human) aiThink(p2, p1, dt);
+  updateFighter(p1, p2, dt, acting);
+  updateFighter(p2, p1, dt, acting);
+
+  // jangchilar bir-biriga kirib ketmasin
+  const dx = p2.x - p1.x;
+  if (Math.abs(dx) < 50 && Math.abs(p1.y - p2.y) < 60) {
+    const push = (50 - Math.abs(dx)) / 2 * (dx >= 0 ? 1 : -1);
+    p1.x = clamp(p1.x - push, 35, W - 35); p2.x = clamp(p2.x + push, 35, W - 35);
+  }
+
+  // o't to'plari
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const pr = projectiles[i];
+    pr.x += pr.vx * dt;
+    const target = pr.owner === p1 ? p2 : p1;
+    let remove = pr.x < -60 || pr.x > W + 60;
+    if (!remove && !target.ko && Math.abs(pr.x - target.x) < 32 && Math.abs(pr.y - (target.y - 60)) < 70) {
+      applyHit(target, pr.owner, pr.dmg, true, pr.dir); remove = true;
+    }
+    if (!remove) {
+      for (let j = projectiles.length - 1; j >= 0; j--) {
+        const o = projectiles[j];
+        if (j !== i && o.owner !== pr.owner && Math.abs(o.x - pr.x) < 30) {
+          spark(pr.x, pr.y, "#fff"); projectiles.splice(Math.max(i, j), 1); projectiles.splice(Math.min(i, j), 1);
+          remove = false; i = Math.min(i, projectiles.length); break;
+        }
+      }
+      continue;
+    }
+    if (remove) projectiles.splice(i, 1);
+  }
+
+  if (state === "fight") {
+    timer -= dt;
+    if (p1.hp <= 0 || p2.hp <= 0 || timer <= 0) endRound();
+  } else if (state === "roundEnd") {
+    endT -= dt;
+    if (endT <= 0) {
+      if (wins[0] >= 2 || wins[1] >= 2) finishMatch();
+      else { round++; startRound(); }
+    }
+  }
+}
+
+// =====================================================
+//  CHIZISH
+// =====================================================
+function drawBackground() {
+  const g = ctx.createLinearGradient(0, 0, 0, GROUND);
+  g.addColorStop(0, "#1a0a2e"); g.addColorStop(0.6, "#6a2a5a"); g.addColorStop(1, "#d8663f");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#ffcf7a"; ctx.beginPath(); ctx.arc(700, 250, 70, 0, 7); ctx.fill();
+  ctx.fillStyle = "#3a1747";
+  ctx.beginPath(); ctx.moveTo(0, GROUND);
+  [[0,330],[120,250],[240,340],[380,220],[520,330],[650,260],[800,350],[920,240],[1000,320],[1000,GROUND]].forEach(p => ctx.lineTo(p[0], p[1]));
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#24102e";
+  ctx.beginPath(); ctx.moveTo(0, GROUND);
+  [[0,380],[150,330],[300,385],[470,320],[620,385],[780,335],[930,385],[1000,350],[1000,GROUND]].forEach(p => ctx.lineTo(p[0], p[1]));
+  ctx.closePath(); ctx.fill();
+  // yer
+  ctx.fillStyle = "#3a2430"; ctx.fillRect(0, GROUND, W, H - GROUND);
+  ctx.fillStyle = "#53323f"; ctx.fillRect(0, GROUND, W, 8);
+  ctx.strokeStyle = "rgba(255,255,255,.07)"; ctx.lineWidth = 2;
+  for (let x = -40; x < W + 80; x += 80) { ctx.beginPath(); ctx.moveTo(x, GROUND + 8); ctx.lineTo(x - 60, H); ctx.stroke(); }
+}
+
+function line(x1, y1, x2, y2, w, color) {
+  ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+}
+
+function drawFighter(f) {
+  const s = f.face, d = f.def;
+  ctx.save();
+  ctx.translate(f.x, f.y);
+  // soya
+  ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.beginPath(); ctx.ellipse(0, 4, 34, 8, 0, 0, 7); ctx.fill();
+  if (f.ko) ctx.rotate(-s * 1.45);
+
+  const lean = f.stun > 0 ? -s * 12 : 0;
+  const hip = { x: 0, y: -48 }, sh = { x: lean * 0.5, y: -92 }, head = { x: lean, y: -110 };
+  const a = f.atk, ext = a ? Math.sin(Math.PI * Math.min(1, a.t / a.dur)) : 0;
+
+  // oyoqlar
+  let backFoot, frontFoot;
+  if (!f.onGround) { frontFoot = { x: s * 16, y: -22 }; backFoot = { x: -s * 12, y: -14 }; }
+  else if (f.block) { frontFoot = { x: s * 18, y: 0 }; backFoot = { x: -s * 18, y: 0 }; }
+  else {
+    const ph = Math.sin(f.walk);
+    frontFoot = { x: s * (14 + ph * 12), y: -Math.max(0, ph) * 8 };
+    backFoot = { x: -s * (14 + ph * 12), y: -Math.max(0, -ph) * 8 };
+  }
+  if (a && a.type === "kick") frontFoot = { x: s * (18 + (a.range - 18) * ext), y: -60 + (1 - ext) * 55 };
+  line(hip.x, hip.y, backFoot.x, backFoot.y, 13, d.pants);
+  line(hip.x, hip.y, frontFoot.x, frontFoot.y, 13, d.pants);
+  ctx.fillStyle = d.skin;
+  ctx.beginPath(); ctx.arc(backFoot.x, backFoot.y, 7, 0, 7); ctx.arc(frontFoot.x, frontFoot.y, 7, 0, 7); ctx.fill();
+
+  // tana
+  line(hip.x, hip.y, sh.x, sh.y, 24, d.color);
+
+  // qo'llar
+  let backHand = { x: -s * 16 + lean * .3, y: -68 }, frontHand = { x: s * 18 + lean * .3, y: -76 };
+  if (f.block) { backHand = { x: s * 22, y: -78 }; frontHand = { x: s * 26, y: -96 }; }
+  if (a && a.type === "punch") frontHand = { x: s * (22 + (a.range - 22) * ext), y: -90 };
+  if (a && a.type === "special") { frontHand = { x: s * (24 + 26 * ext), y: -82 }; backHand = { x: s * (18 + 22 * ext), y: -76 }; }
+  if (!f.onGround && !a) { frontHand = { x: s * 20, y: -105 }; backHand = { x: -s * 16, y: -100 }; }
+  line(sh.x, sh.y + 4, backHand.x, backHand.y, 10, d.color);
+  // bosh
+  ctx.fillStyle = d.skin; ctx.beginPath(); ctx.arc(head.x, head.y, 15, 0, 7); ctx.fill();
+  ctx.fillStyle = d.band; ctx.fillRect(head.x - 15, head.y - 8, 30, 6);
+  ctx.fillStyle = "#111"; ctx.beginPath(); ctx.arc(head.x + s * 7, head.y - 1, 2.4, 0, 7); ctx.fill();
+  line(sh.x, sh.y + 4, frontHand.x, frontHand.y, 10, d.color);
+  ctx.fillStyle = d.skin;
+  ctx.beginPath(); ctx.arc(backHand.x, backHand.y, 6.5, 0, 7); ctx.arc(frontHand.x, frontHand.y, 6.5, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+function drawBar(x, w, hp, max, flip, color) {
+  ctx.fillStyle = "#000"; ctx.fillRect(x - 3, 21, w + 6, 26);
+  ctx.fillStyle = "#3a1a1a"; ctx.fillRect(x, 24, w, 20);
+  const fw = w * Math.max(0, hp) / max;
+  ctx.fillStyle = hp / max > 0.3 ? color : "#ff4d4d";
+  ctx.fillRect(flip ? x + w - fw : x, 24, fw, 20);
+}
+
+function drawHUD() {
+  ctx.textAlign = "left"; ctx.font = "bold 18px Arial"; ctx.fillStyle = "#fff";
+  drawBar(40, 400, p1.hp, p1.max, false, "#4ade80");
+  drawBar(560, 400, p2.hp, p2.max, true, "#4ade80");
+  ctx.textAlign = "left"; ctx.fillText(p1.def.name + (vsAI || true ? "" : ""), 40, 18);
+  ctx.textAlign = "right"; ctx.fillText(p2.def.name + (vsAI ? " (PC)" : ""), 960, 18);
+  // energiya
+  ctx.fillStyle = "#000"; ctx.fillRect(37, 54, 206, 12); ctx.fillRect(757, 54, 206, 12);
+  ctx.fillStyle = p1.energy >= 50 ? "#ffd43b" : "#a855f7"; ctx.fillRect(40, 57, 200 * p1.energy / 100, 6);
+  ctx.fillStyle = p2.energy >= 50 ? "#ffd43b" : "#a855f7"; ctx.fillRect(960 - 200 * p2.energy / 100, 57, 200 * p2.energy / 100, 6);
+  // g'alabalar
+  for (let i = 0; i < 2; i++) {
+    ctx.fillStyle = i < wins[0] ? "#ffd43b" : "rgba(255,255,255,.25)"; ctx.beginPath(); ctx.arc(52 + i * 24, 84, 8, 0, 7); ctx.fill();
+    ctx.fillStyle = i < wins[1] ? "#ffd43b" : "rgba(255,255,255,.25)"; ctx.beginPath(); ctx.arc(948 - i * 24, 84, 8, 0, 7); ctx.fill();
+  }
+  // taymer
+  ctx.textAlign = "center"; ctx.font = "bold 40px Arial"; ctx.fillStyle = "#fff";
+  ctx.fillText(Math.max(0, Math.ceil(timer)), W / 2, 52);
+  ctx.font = "13px Arial"; ctx.fillStyle = "rgba(255,255,255,.7)";
+  ctx.fillText("Raund " + round, W / 2, 72);
+}
+
+function draw() {
+  ctx.fillStyle = "#0d0614"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(offX, offY); ctx.scale(scale, scale);
+  ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
+  if (shake > 0) ctx.translate(rand(-shake, shake) * .5, rand(-shake, shake) * .5);
+
+  drawBackground();
+  if (p1) {
+    const order = p1.y >= p2.y ? [p2, p1] : [p1, p2];
+    order.forEach(drawFighter);
+
+    for (const pr of projectiles) {
+      ctx.fillStyle = pr.color; ctx.globalAlpha = 0.35;
+      ctx.beginPath(); ctx.arc(pr.x - pr.dir * 14, pr.y, pr.r * 1.2, 0, 7); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.arc(pr.x, pr.y, pr.r, 0, 7); ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(pr.x, pr.y, pr.r * 0.45, 0, 7); ctx.fill();
+    }
+    for (const s of sparks) {
+      ctx.strokeStyle = s.color; ctx.lineWidth = 3; ctx.globalAlpha = s.life / 0.3;
+      for (let i = 0; i < 8; i++) {
+        const a = i * Math.PI / 4, r1 = 6, r2 = 14 + (0.3 - s.life) * 60;
+        ctx.beginPath(); ctx.moveTo(s.x + Math.cos(a) * r1, s.y + Math.sin(a) * r1);
+        ctx.lineTo(s.x + Math.cos(a) * r2, s.y + Math.sin(a) * r2); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+    drawHUD();
+
+    if (msg) {
+      ctx.textAlign = "center"; ctx.lineJoin = "round";
+      const lines = msg.split("\n");
+      lines.forEach((t, i) => {
+        ctx.font = (i === 0 ? "bold 78px" : "bold 32px") + " Arial";
+        ctx.lineWidth = 8; ctx.strokeStyle = "#2a0d00";
+        const y = 230 + i * 56;
+        ctx.strokeText(t, W / 2, y); ctx.fillStyle = i === 0 ? "#ff6b35" : "#fff"; ctx.fillText(t, W / 2, y);
+      });
+    }
+  }
+  ctx.restore();
+}
+
+// =====================================================
+//  ASOSIY SIKL
+// =====================================================
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (state !== "menu") update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+// menyu orqasida chiroyli fon uchun jangchilarni tayyorlab qo'yamiz
+p1 = newFighter(FIGHTERS[0], 280, 1, true, CTRL1);
+p2 = newFighter(FIGHTERS[1], 720, -1, false, CTRL2);
+projectiles = []; sparks = []; wins = [0, 0]; round = 1; timer = ROUND_TIME; msg = "";
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
